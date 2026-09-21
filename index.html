@@ -10,15 +10,18 @@
     <meta name="apple-mobile-web-app-title" content="Keuangan V&N">
     <meta name="description" content="Catatan keuangan keluarga Vian & Nana untuk pemasukan, pengeluaran, saldo, dan tagihan.">
     <title>Keuangan Vian & Nana</title>
-    <link rel="manifest" href="/manifest.webmanifest">
-    <link rel="icon" href="/icons/app-icon.svg" type="image/svg+xml">
-    <link rel="apple-touch-icon" href="/icons/apple-touch-icon.png">
+    <link rel="manifest" href="./manifest.webmanifest">
+    <link rel="icon" href="./icons/app-icon.svg" type="image/svg+xml">
+    <link rel="apple-touch-icon" href="./icons/apple-touch-icon.png">
     <script src="https://cdn.tailwindcss.com"></script>
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@300;400;500;600;700;800&family=Sacramento&display=swap" rel="stylesheet">
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
     <script src="https://unpkg.com/lucide@latest"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+    <script src="./supabase-config.js"></script>
+    <script src="./sync.js"></script>
     <script>
         tailwind.config = {
             theme: {
@@ -104,7 +107,7 @@
             <div class="max-w-6xl mx-auto px-4 sm:px-6 lg:px-8 py-3 flex items-center justify-between">
                 <div class="flex items-center space-x-3">
                     <div class="relative w-11 h-11 shrink-0 rounded-[13px] shadow-lg shadow-rose-200/70 transition-transform duration-300 hover:-translate-y-0.5">
-                        <img src="/icons/app-icon.svg" alt="Logo Keuangan Vian &amp; Nana" class="w-full h-full rounded-[13px]" width="44" height="44">
+                        <img src="./icons/app-icon.svg" alt="Logo Keuangan Vian &amp; Nana" class="w-full h-full rounded-[13px]" width="44" height="44">
                         <span class="absolute inset-0 rounded-[13px] ring-1 ring-white/50 ring-inset" aria-hidden="true"></span>
                     </div>
                     <div>
@@ -116,6 +119,11 @@
                 </div>
 
                 <div class="flex items-center space-x-2">
+                    <span id="syncStatus" class="hidden sm:inline-flex items-center gap-1 text-[10px] font-semibold text-slate-400 px-2 py-1 rounded-lg bg-white/70 border border-slate-100" title="Status sinkronisasi">● Mode lokal</span>
+                    <button id="syncAccountButton" onclick="openSyncAccount()" class="p-2 rounded-full hover:bg-teal-50 text-slate-600 hover:text-teal-700 transition flex items-center gap-1 text-xs sm:text-sm font-medium border border-teal-100 bg-white/50" title="Akun sinkronisasi">
+                        <i data-lucide="cloud" class="w-4 h-4 text-teal-600"></i>
+                        <span class="hidden sm:inline">Sync</span>
+                    </button>
                     <button id="installAppButton" onclick="handleInstallApp()" class="hidden p-2 rounded-full hover:bg-pink-50 text-slate-600 hover:text-pink-600 transition items-center gap-1 text-xs sm:text-sm font-medium border border-pink-100 bg-white/50" title="Pasang sebagai aplikasi">
                         <i data-lucide="download" class="w-4 h-4 text-pink-500"></i>
                         <span class="hidden sm:inline">Pasang App</span>
@@ -348,6 +356,29 @@
         </div>
     </div>
 
+    <!-- Modal Akun Sinkronisasi -->
+    <div id="syncAccountModal" class="fixed inset-0 z-50 hidden bg-slate-900/50 backdrop-blur-sm flex items-center justify-center p-4">
+        <div class="bg-white rounded-3xl shadow-2xl w-full max-w-md p-6">
+            <div class="flex items-center justify-between mb-4">
+                <div>
+                    <h3 class="text-lg font-bold text-slate-800">Sinkronisasi Antar-HP</h3>
+                    <p class="text-xs text-slate-500 mt-1">Gunakan akun yang sama di Android dan iPhone.</p>
+                </div>
+                <button onclick="closeModal('syncAccountModal')" class="text-slate-400 hover:text-slate-600 p-1">✕</button>
+            </div>
+            <div class="space-y-3">
+                <input id="syncEmail" type="email" autocomplete="email" placeholder="Email" class="w-full px-4 py-3 rounded-xl border border-slate-200 text-sm outline-none focus:ring-2 focus:ring-teal-200">
+                <input id="syncPassword" type="password" autocomplete="current-password" placeholder="Password minimal 6 karakter" class="w-full px-4 py-3 rounded-xl border border-slate-200 text-sm outline-none focus:ring-2 focus:ring-teal-200">
+                <p id="syncAccountMessage" class="text-xs text-slate-500"></p>
+                <div class="grid grid-cols-2 gap-2">
+                    <button onclick="syncLogin()" class="py-3 rounded-xl bg-teal-600 hover:bg-teal-700 text-white text-sm font-bold">Login</button>
+                    <button onclick="syncRegister()" class="py-3 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 text-sm font-bold">Buat Akun</button>
+                </div>
+                <button onclick="syncLogout()" class="w-full py-2 text-xs text-rose-600 hover:bg-rose-50 rounded-xl">Keluar dari akun sync</button>
+            </div>
+        </div>
+    </div>
+
     <!-- 1. Modal Add/Edit Transaction -->
     <div id="transactionModal" class="fixed inset-0 z-50 hidden bg-slate-900/50 backdrop-blur-sm flex items-center justify-center p-4">
         <div class="glass-card bg-white rounded-3xl max-w-md w-full p-6 shadow-2xl space-y-4 border border-rose-100">
@@ -569,6 +600,16 @@
             document.getElementById('billDueDate').valueAsDate = new Date();
 
             initializeInstallExperience();
+            if (window.financeSync) {
+                window.financeSync.start({
+                    getState: () => state,
+                    setState: (remoteState) => {
+                        state = remoteState;
+                        localStorage.setItem('vian_nana_finance_data', JSON.stringify(state));
+                        renderAll();
+                    }
+                });
+            }
         };
 
         function initializeInstallExperience() {
@@ -595,7 +636,7 @@
             });
 
             if ('serviceWorker' in navigator) {
-                navigator.serviceWorker.register('/service-worker.js').catch(error => {
+                navigator.serviceWorker.register('./service-worker.js', { scope: './' }).catch(error => {
                     console.error('Service worker gagal didaftarkan', error);
                 });
             }
@@ -613,6 +654,61 @@
             lucide.createIcons();
         }
 
+        // --- CLOUD SYNC ACCOUNT ---
+        function openSyncAccount() {
+            openModal('syncAccountModal');
+            lucide.createIcons();
+            refreshSyncAccountStatus();
+        }
+
+        async function refreshSyncAccountStatus() {
+            const msg = document.getElementById('syncAccountMessage');
+            if (!msg) return;
+            if (!window.supabase || !window.SUPABASE_CONFIG?.url || !window.SUPABASE_CONFIG?.anonKey) {
+                msg.textContent = 'Cloud sync belum dikonfigurasi. Isi supabase-config.js terlebih dahulu.';
+                return;
+            }
+            const db = window.supabase.createClient(window.SUPABASE_CONFIG.url, window.SUPABASE_CONFIG.anonKey);
+            const { data } = await db.auth.getSession();
+            msg.textContent = data.session ? `Login sebagai ${data.session.user.email}` : 'Belum login.';
+        }
+
+        async function syncLogin() {
+            const msg = document.getElementById('syncAccountMessage');
+            try {
+                const db = window.supabase.createClient(window.SUPABASE_CONFIG.url, window.SUPABASE_CONFIG.anonKey);
+                const email = document.getElementById('syncEmail').value.trim();
+                const password = document.getElementById('syncPassword').value;
+                if (!email || !password) throw new Error('Email dan password wajib diisi.');
+                const { error } = await db.auth.signInWithPassword({ email, password });
+                if (error) throw error;
+                msg.textContent = 'Login berhasil. Menyinkronkan data…';
+                if (window.financeSync) await window.financeSync.refresh();
+                closeModal('syncAccountModal');
+            } catch (e) { msg.textContent = e.message || 'Login gagal.'; }
+        }
+
+        async function syncRegister() {
+            const msg = document.getElementById('syncAccountMessage');
+            try {
+                const db = window.supabase.createClient(window.SUPABASE_CONFIG.url, window.SUPABASE_CONFIG.anonKey);
+                const email = document.getElementById('syncEmail').value.trim();
+                const password = document.getElementById('syncPassword').value;
+                if (!email || password.length < 6) throw new Error('Isi email dan password minimal 6 karakter.');
+                const { error } = await db.auth.signUp({ email, password });
+                if (error) throw error;
+                msg.textContent = 'Akun dibuat. Jika diminta, cek email konfirmasi lalu login.';
+            } catch (e) { msg.textContent = e.message || 'Pendaftaran gagal.'; }
+        }
+
+        async function syncLogout() {
+            if (!window.supabase || !window.SUPABASE_CONFIG?.url || !window.SUPABASE_CONFIG?.anonKey) return;
+            const db = window.supabase.createClient(window.SUPABASE_CONFIG.url, window.SUPABASE_CONFIG.anonKey);
+            await db.auth.signOut();
+            if (window.financeSync) window.financeSync.setStatus('Belum login');
+            refreshSyncAccountStatus();
+        }
+
         // --- LOCAL STORAGE HELPERS ---
         function loadFromLocalStorage() {
             const saved = localStorage.getItem('vian_nana_finance_data');
@@ -627,6 +723,9 @@
 
         function saveToLocalStorage() {
             localStorage.setItem('vian_nana_finance_data', JSON.stringify(state));
+            if (window.financeSync && window.financeSync.enabled) {
+                window.financeSync.queueSave(state);
+            }
         }
 
         function initializeDefaultDataIfEmpty() {
